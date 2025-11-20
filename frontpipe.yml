@@ -1,0 +1,62 @@
+trigger:
+- main
+
+stages:
+- stage: Build
+  displayName: 'Build stage'
+  jobs:
+  - job: BuildJob
+    displayName: 'Build job'
+    pool:
+      name: GENIEAIUAT
+    steps:
+    - task: replacetokens@5
+      displayName: 'Replace tokens in .env file'
+      inputs:
+        targetFiles: '.env'
+        encoding: 'auto'
+        tokenPattern: 'doublebraces'
+        writeBOM: true
+        actionOnMissing: 'fail'
+        keepToken: false
+        actionOnNoFiles: 'fail'
+        enableTransforms: false
+        enableRecursion: false
+        useLegacyPattern: false
+        enableTelemetry: true
+
+    - task: Docker@1
+      displayName: 'Build an image'
+      inputs:
+       azureSubscriptionEndpoint: '$(acr-svc)'
+       azureContainerRegistry: '$(dockerRegistry)'
+       dockerFile: Dockerfile
+       arguments: '--build-arg http_proxy=$(proxyserver) --build-arg https_proxy=$(proxyserver)'
+
+    - task: Docker@0
+      displayName: 'Push an image'
+      inputs:
+        azureSubscription: '$(acr-svc)'
+        azureContainerRegistry: '{"loginServer":"$(dockerRegistry)", "id" : "$(dockerRegistryID)"}'
+        action: 'Push an image'
+        includeSourceTags: true
+
+- stage: Deploy
+  displayName: 'Deploy stage'
+  jobs:
+  - deployment: DeployToUAT
+    environment: AKS-UAT
+    pool:
+      name: GENIEAIUAT
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - script: |
+              kubectl apply -n $(namespace) -f $(deployfile)
+            displayName: 'Apply Deployment'
+
+          - script: |
+              echo "Running command: kubectl set image $(image.update) -n $(namespace)"
+              kubectl set image $(image.update) -n $(namespace)
+            displayName: 'Update Image'
